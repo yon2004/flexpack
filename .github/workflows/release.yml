@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install e2fsprogs
+        run: sudo apt-get update && sudo apt-get install -y e2fsprogs
+
+      # Never ship a build that has not passed the filesystem tests. A silent
+      # ext4 corruption is the failure mode this project exists to avoid.
+      - run: go test ./...
+
+      - name: Build release binaries
+        run: |
+          mkdir -p dist
+          VERSION=${GITHUB_REF_NAME}
+          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os=${target%/*}; arch=${target#*/}; ext=""
+            [ "$os" = "windows" ] && ext=".exe"
+            GOOS=$os GOARCH=$arch go build \
+              -ldflags="-s -w -X main.version=$VERSION" \
+              -o "dist/flexpack-$os-$arch$ext" .
+          done
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

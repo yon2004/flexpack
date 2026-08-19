@@ -1,0 +1,29 @@
+flexpack
+Copyright (c) 2026 Yon
+
+Licensed under the MIT License. See LICENSE.
+
+--------------------------------------------------------------------------
+Third-party material
+--------------------------------------------------------------------------
+
+schema.go transcribes the OOBE configuration key names, value types, handler
+sides and behavioural semantics from:
+
+    chrome/browser/ash/login/configuration_keys.{h,cc}
+    Copyright 2018 The Chromium Authors
+    Licensed under a BSD-style licence:
+    https://chromium.googlesource.com/chromium/src/+/main/LICENSE
+
+The descriptive text in schema.go is rewritten, not copied, but the key names
+and the validation semantics are Chromium's design and are reproduced here so
+that generated configuration files are accepted by ChromeOS.
+
+ext4.go is an original implementation written against the publicly documented
+ext4 on-disk format. Its checksum routines reproduce the algorithms used by
+e2fsprogs (crc32c over specific field ranges); no e2fsprogs code was copied.
+
+This project is not affiliated with, endorsed by, or sponsored by Google.
+ChromeOS and ChromeOS Flex are trademarks of Google LLC. The subcommand names
+package_flex_image and download_flex_image match Google's cros-flex-tools so
+that existing scripts work unchanged; they are used descriptively only.

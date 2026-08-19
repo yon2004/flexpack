@@ -1,0 +1,24 @@
+# Disk images — these are gigabytes and may carry a live enrolment token
+*.bin
+*.img
+*.bin.zip
+*.partial
+
+# A config.json here is likely to hold a real token. Commit an example instead.
+config.json
+!config-example.json
+
+# Built binaries
+flexpack
+flexpack.exe
+flexpack-*
+package_flex_image
+package_flex_image.exe
+download_flex_image
+download_flex_image.exe
+dist/
+
+# Go
+*.test
+*.out
+coverage.*
