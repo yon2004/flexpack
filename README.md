@@ -106,7 +106,7 @@ to in place.
 ## Install
 
 ```
-go install github.com/YOURNAME/flexpack@latest
+go install github.com/yon2004/flexpack@latest
 ```
 
 Or grab a binary from [Releases](../../releases). Windows binaries are
