@@ -1,3 +1,3 @@
-module github.com/yon2004/flexpack
+module github.com/yon/flexpack
 
 go 1.22.2

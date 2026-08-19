@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -279,5 +280,193 @@ func TestOpenFSRejectsNonExt4(t *testing.T) {
 
 	if _, err := OpenFS(f, 0); err == nil {
 		t.Fatal("expected a magic-number error on a zeroed image")
+	}
+}
+
+// newDisk builds a GPT image with a single STATE partition holding an ext4
+// filesystem, so Inject can be exercised on the same shape as a real Flex
+// image rather than a bare filesystem.
+func newDisk(t *testing.T, dirs ...string) string {
+	t.Helper()
+	requireE2fsprogs(t)
+
+	const (
+		sector   = 512
+		startLBA = 8192
+		fsMB     = 512
+	)
+	path := filepath.Join(t.TempDir(), "disk.bin")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(startLBA*sector + int64(fsMB)<<20 + (1 << 20)); err != nil {
+		t.Fatal(err)
+	}
+
+	// One GPT entry: type GUID is arbitrary because ChromeOS uses
+	// non-standard ones and we locate partitions by name.
+	entries := make([]byte, 128*128)
+	e := entries[:128]
+	for i := 0; i < 16; i++ {
+		e[i] = byte(i + 1) // non-zero type GUID
+		e[16+i] = byte(i + 40)
+	}
+	binary.LittleEndian.PutUint64(e[32:], uint64(startLBA))
+	binary.LittleEndian.PutUint64(e[40:], uint64(startLBA+(int64(fsMB)<<20)/sector-1))
+	for i, r := range "STATE" {
+		binary.LittleEndian.PutUint16(e[56+i*2:], uint16(r))
+	}
+	if _, err := f.WriteAt(entries, 2*sector); err != nil {
+		t.Fatal(err)
+	}
+
+	hdr := make([]byte, 92)
+	copy(hdr[0:], gptSignature)
+	binary.LittleEndian.PutUint32(hdr[8:], 0x00010000)
+	binary.LittleEndian.PutUint32(hdr[12:], 92)
+	binary.LittleEndian.PutUint64(hdr[24:], 1)
+	binary.LittleEndian.PutUint64(hdr[32:], 2)
+	binary.LittleEndian.PutUint64(hdr[72:], 2)
+	binary.LittleEndian.PutUint32(hdr[80:], 128)
+	binary.LittleEndian.PutUint32(hdr[84:], 128)
+	if _, err := f.WriteAt(hdr, sector); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	// Build the filesystem separately, then splice it into the partition.
+	fsImg := newFS(t, fsMB, dirs...)
+	blob, err := os.ReadFile(fsImg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disk, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := disk.WriteAt(blob, startLBA*sector); err != nil {
+		t.Fatal(err)
+	}
+	disk.Close()
+	return path
+}
+
+func statePartition(t *testing.T, disk string) string {
+	t.Helper()
+	f, err := os.Open(disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	parts, err := ReadGPT(f, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := FindPartition(parts, "STATE")
+	if !ok {
+		t.Fatal("STATE partition not found by name")
+	}
+
+	out := filepath.Join(t.TempDir(), "state.img")
+	blob := make([]byte, p.Length)
+	if _, err := f.ReadAt(blob, p.Start); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestGPTFindsStateByName(t *testing.T) {
+	disk := newDisk(t, "/unencrypted")
+	f, _ := os.Open(disk)
+	defer f.Close()
+
+	parts, err := ReadGPT(f, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := FindPartition(parts, "STATE")
+	if !ok {
+		t.Fatal("STATE not found")
+	}
+	if p.Index != 1 || p.Start != 8192*512 {
+		t.Errorf("partition = %+v", p)
+	}
+}
+
+func TestInjectOnGPTImage(t *testing.T) {
+	disk := newDisk(t, "/unencrypted")
+	cfg, err := BuildConfig("12345678-90ab-cdef-1234-567890abcdef", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := InjectOptions{
+		ImagePath: disk, Target: flexConfigPath, Data: cfg, Partition: "STATE",
+	}
+	if err := Inject(opts); err != nil {
+		t.Fatal(err)
+	}
+	fsckClean(t, statePartition(t, disk))
+
+	if got := strings.TrimSpace(readFile(t, statePartition(t, disk), flexConfigPath)); got != string(cfg) {
+		t.Errorf("readback mismatch:\n got: %s\nwant: %s", got, cfg)
+	}
+
+	// Without --force a second run must refuse.
+	if err := Inject(opts); err == nil {
+		t.Fatal("second inject should have been refused without Force")
+	}
+
+	// With Force it replaces in place.
+	opts.Force = true
+	opts.Data = []byte(`{"enrollmentToken": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`)
+	if err := Inject(opts); err != nil {
+		t.Fatal(err)
+	}
+	fsckClean(t, statePartition(t, disk))
+}
+
+// A dry run reports; it never fails on state it is only describing. Checking
+// Force before the DryRun branch made --dry-run error out on exactly the
+// images an operator most wants to inspect: ones already carrying a config.
+func TestDryRunNeverFails(t *testing.T) {
+	disk := newDisk(t, "/unencrypted")
+	cfg, _ := BuildConfig("12345678-90ab-cdef-1234-567890abcdef", false, nil)
+
+	opts := InjectOptions{
+		ImagePath: disk, Target: flexConfigPath, Data: cfg, Partition: "STATE",
+	}
+	dry := opts
+	dry.DryRun = true
+
+	if err := Inject(dry); err != nil {
+		t.Fatalf("dry run on a clean image: %v", err)
+	}
+	if err := Inject(opts); err != nil {
+		t.Fatal(err)
+	}
+	if err := Inject(dry); err != nil {
+		t.Fatalf("dry run on an already-tagged image must report, not fail: %v", err)
+	}
+}
+
+func TestInjectUnknownPartitionNamesWhatExists(t *testing.T) {
+	disk := newDisk(t, "/unencrypted")
+	cfg, _ := BuildConfig("12345678-90ab-cdef-1234-567890abcdef", false, nil)
+
+	err := Inject(InjectOptions{
+		ImagePath: disk, Target: flexConfigPath, Data: cfg, Partition: "NOPE",
+	})
+	if err == nil {
+		t.Fatal("expected an error for a missing partition")
+	}
+	if !strings.Contains(err.Error(), "STATE") {
+		t.Errorf("error should list the partitions that do exist: %v", err)
 	}
 }

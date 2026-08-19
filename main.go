@@ -192,7 +192,10 @@ func cmdInject(args []string) error {
 	configFile := fs.String("config", "", "use this config.json instead of building one from --token")
 	target := fs.String("path", flexConfigPath, "path inside the filesystem")
 	partName := fs.String("partition", "STATE", "GPT partition name to write into")
-	automate := fs.Bool("automate-setup", false, "add the OOBE setup-automation keys (see README caveat)")
+	automate := fs.Bool("automate-setup", false, "add the OOBE setup-automation keys")
+	desc := fs.String("desc", "", "free-text note stored in the config's desc field")
+	var sets kvFlag
+	fs.Var(&sets, "set", "extra OOBE key, repeatable: --set skipHidScreen=true")
 	force := fs.Bool("force", false, "replace an existing config")
 	dryRun := fs.Bool("dry-run", false, "report what would happen, change nothing")
 	if err := fs.Parse(args); err != nil {
@@ -210,7 +213,14 @@ func cmdInject(args []string) error {
 	if *configFile != "" {
 		data, err = LoadConfigFile(*configFile)
 	} else {
-		data, err = BuildConfig(*token, *automate, nil)
+		extra, perr := sets.Fields()
+		if perr != nil {
+			return perr
+		}
+		if *desc != "" {
+			extra = append(extra, KV{"desc", *desc})
+		}
+		data, err = BuildConfig(*token, *automate, extra)
 	}
 	if err != nil {
 		return err

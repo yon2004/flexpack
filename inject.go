@@ -71,18 +71,26 @@ func Inject(o InjectOptions) error {
 	if err != nil {
 		return err
 	}
-	if existing != nil && !o.Force {
-		return fmt.Errorf("%s already exists in this image (inode %d); pass --force to replace it",
-			o.Target, existing.num)
-	}
-
+	// A dry run reports; it never fails on state it is only describing.
+	// Checking Force first would make --dry-run error out on exactly the
+	// images an operator most wants to inspect.
 	if o.DryRun {
-		if existing != nil {
-			fmt.Fprintf(os.Stderr, "  dry run: would replace %s (inode %d)\n", o.Target, existing.num)
-		} else {
+		switch {
+		case existing != nil && !o.Force:
+			fmt.Fprintf(os.Stderr, "  dry run: %s already exists (inode %d) — would need --force\n",
+				o.Target, existing.num)
+		case existing != nil:
+			fmt.Fprintf(os.Stderr, "  dry run: would replace %s in place (inode %d)\n",
+				o.Target, existing.num)
+		default:
 			fmt.Fprintf(os.Stderr, "  dry run: would create %s\n", o.Target)
 		}
 		return nil
+	}
+
+	if existing != nil && !o.Force {
+		return fmt.Errorf("%s already exists in this image (inode %d); pass --force to replace it",
+			o.Target, existing.num)
 	}
 
 	// Replacing in place allocates nothing, so prefer it when we can.

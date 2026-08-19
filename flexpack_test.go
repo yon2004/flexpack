@@ -314,3 +314,47 @@ func TestSchemaWellFormed(t *testing.T) {
 		}
 	}
 }
+
+// TestSetFlagsReachInject guards the flag wiring: --set and --desc were
+// documented for `flexpack inject` but only implemented on
+// `package_flex_image`, so they parsed nowhere and silently did nothing.
+func TestSetFlagsProduceFields(t *testing.T) {
+	var sets kvFlag
+	for _, s := range []string{"skipHidScreen=true", "language=en-AU"} {
+		if err := sets.Set(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fields, err := sets.Fields()
+	if err != nil {
+		t.Fatalf("Fields: %v", err)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("got %d fields, want 2", len(fields))
+	}
+	if fields[0].Key != "skipHidScreen" || fields[0].Value != true {
+		t.Errorf("boolean not coerced: %+v", fields[0])
+	}
+	if fields[1].Value != "en-AU" {
+		t.Errorf("string mangled: %+v", fields[1])
+	}
+
+	data, err := BuildConfig("12345678-90ab-cdef-1234-567890abcdef", true,
+		append(fields, KV{"desc", "Finance OU"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"skipHidScreen": true`, `"language": "en-AU"`, `"desc": "Finance OU"`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("config missing %s:\n%s", want, data)
+		}
+	}
+}
+
+func TestSetFlagRejectsUnknownKey(t *testing.T) {
+	var sets kvFlag
+	_ = sets.Set("updateSkipUpdate=true") // plausible, but not a real key
+	if _, err := sets.Fields(); err == nil {
+		t.Fatal("an unknown key must be rejected at the flag")
+	}
+}
