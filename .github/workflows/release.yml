@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
 
       - name: Install e2fsprogs
         run: sudo apt-get update && sudo apt-get install -y e2fsprogs
@@ -30,13 +30,17 @@ jobs:
           for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os=${target%/*}; arch=${target#*/}; ext=""
             [ "$os" = "windows" ] && ext=".exe"
-            GOOS=$os GOARCH=$arch go build \
+            GOOS=$os GOARCH=$arch go build -trimpath \
               -ldflags="-s -w -X main.version=$VERSION" \
               -o "dist/flexpack-$os-$arch$ext" .
           done
           cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
 
-      - uses: softprops/action-gh-release@v2
+      #git ls-remote https://github.com/softprops/action-gh-release v2
+      #git ls-remote --tags https://github.com/softprops/action-gh-release | Select-String 3bb12739
+      #3bb12739c298aeb8a4eeaf626c5b8d85266b0e65        refs/tags/v2
+      #3bb12739c298aeb8a4eeaf626c5b8d85266b0e65        refs/tags/v2.6.2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           files: dist/*
           generate_release_notes: true
